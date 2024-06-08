@@ -1,0 +1,190 @@
+---
+title: "John-Hopkins University Covid19"
+author: "Michael P"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Analysis of COVID-19 Data from Johns Hopkins University
+
+The COVID-19 pandemic has brought unprecedented challenges globally, impacting millions and leading to various control measures by nations worldwide. To understand the progression of this pandemic, extensive data has been gathered and shared by multiple sources, notably the Johns Hopkins University Center for Systems Science and Engineering. In this R Markdown analysis, we will examine the COVID-19 data from Johns Hopkins, utilizing several R packages to derive insights into the pandemic's development. We will begin by loading the necessary packages, proceed to read the data files, and then clean and process the data for analysis. The goal of this study is to gain a deeper understanding of COVID-19's effects on a global scale.
+
+## Loading Required Packages
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(readr)
+library(ggplot2)
+```
+
+## Setting URLs for Data Files
+
+```{r}
+url_base <- "https://raw.githubusercontent.com/porty29/JHU-COVID19/6820592b224572d19ed31bcd2c950256ba871038/covid_19_time_series/"
+data_files <- c("time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_global.csv")
+data_urls <- str_c(url_base, data_files)
+```
+
+## Reading Data Files
+
+```{r}
+confirmed_cases <- read_csv(data_urls[1])
+deaths_cases <- read_csv(data_urls[2])
+```
+
+## Examining the Confirmed Cases Data
+
+```{r}
+head(confirmed_cases)
+```
+
+## Data Cleaning and Transformation
+
+```{r}
+confirmed_cases_long <- confirmed_cases %>%
+  pivot_longer(cols = -c(`Province/State`, `Country/Region`, Lat, Long),
+               names_to = "date",
+               values_to = "confirmed") %>%
+  select(-c(Lat, Long))
+
+deaths_cases_long <- deaths_cases %>%
+  pivot_longer(cols = -c(`Province/State`, `Country/Region`, Lat, Long),
+               names_to = "date",
+               values_to = "deaths") %>%
+  select(-c(Lat, Long))
+
+global_data <- full_join(confirmed_cases_long, deaths_cases_long,
+                         by = c("Province/State", "Country/Region", "date")) %>%
+  rename(Province = `Province/State`,
+         Country = `Country/Region`) %>%
+  mutate(date = mdy(date))
+
+global_data <- global_data %>%
+  filter(confirmed > 0)
+
+summary(global_data)
+```
+
+## Top 5 Countries with the Most COVID-19 Cases as of Six Months After the Pandemic Started
+
+```{r}
+global_jul20 <- global_data %>% filter(date == as.Date("2020-07-20"))
+
+jul20_summary <- global_jul20 %>%
+  group_by(Country) %>%
+  summarize(total_confirmed = sum(confirmed)) %>%
+  arrange(desc(total_confirmed))
+
+top5_jul20 <- jul20_summary %>%
+  slice(1:5)
+
+top5_jul20
+```
+
+## Visualizing Total Cases of Top 5 Countries from 01-22-2020 to 07-20-2020
+
+```{r, fig.width=10, fig.height=6}
+global_filtered <- global_data %>%
+  filter(date >= as.Date("2020-01-22") & date <= as.Date("2020-07-20"))
+
+top5_countries <- global_filtered %>%
+  group_by(Country) %>%
+  summarize(total_confirmed = sum(confirmed)) %>%
+  arrange(desc(total_confirmed)) %>%
+  slice(1:5)
+
+filtered_top5 <- global_filtered %>%
+  filter(Country %in% top5_countries$Country)
+
+ggplot(filtered_top5, aes(x = date, y = confirmed, color = Country)) +
+  geom_line(size = 1) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "Total COVID-19 Cases by Top 5 Countries",
+       subtitle = "From January 22, 2020, to July 20, 2020",
+       x = "Date",
+       y = "Total Cases",
+       color = "Country") +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
+  theme_bw() +
+  theme(plot.title = element_text(face = "bold", size = 14),
+        plot.subtitle = element_text(size = 12),
+        axis.title = element_text(face = "bold", size = 12),
+        legend.title = element_text(face = "bold", size = 10),
+        legend.text = element_text(size = 8),
+        axis.text.x = element_text(angle = 90, vjust = 0.5))
+```
+
+## Mortality Rates Calculation
+
+```{r}
+global_data <- global_data %>%
+  mutate(mortality_rate = deaths / confirmed)
+
+top_mortality_rates <- global_data %>%
+  group_by(Country) %>%
+  summarize(total_confirmed = sum(confirmed),
+            total_deaths = sum(deaths),
+            mortality_rate = total_deaths / total_confirmed) %>%
+  arrange(desc(mortality_rate)) %>%
+  slice(1:10)
+
+top_mortality_rates
+```
+
+## Bar Chart of Top 10 Countries with Highest Mortality Rates
+
+```{r, fig.width=10, fig.height=6}
+top_mortality_filtered <- global_data %>%
+  filter(Country != "MS Zaandam" & Country != "Korea, North") %>%
+  group_by(Country) %>%
+  summarize(total_confirmed = sum(confirmed),
+            total_deaths = sum(deaths),
+            mortality_rate = total_deaths / total_confirmed) %>%
+  arrange(desc(mortality_rate)) %>%
+  slice(1:10)
+
+ggplot(top_mortality_filtered, aes(x = reorder(Country, -mortality_rate), y = mortality_rate)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Top 10 Countries with Highest Mortality Rates",
+       x = "Country",
+       y = "Mortality Rate") +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+```
+
+## Modelling of Flattened Mortality Rates
+
+```{r, fig.width=10, fig.height=6}
+global_data %>%
+  filter(date >= "2020-01-22" & date <= "2023-03-09") %>%
+  group_by(Country) %>%
+  summarize(total_confirmed = sum(confirmed),
+            total_deaths = sum(deaths)) %>%
+  ungroup() %>%
+  mutate(mortality_rate = total_deaths / total_confirmed) %>%
+  filter(total_confirmed >= 1000000) %>%
+  top_n(10, mortality_rate) %>%
+  ggplot(aes(x = reorder(Country, -mortality_rate), y = mortality_rate, fill = Country)) +
+  geom_col() +
+  scale_fill_viridis_d() +
+  labs(title = "Top 10 Countries by Mortality Rate",
+       x = "Country",
+       y = "Mortality Rate") +
+  coord_flip() +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+## Conclusion
+
+Upon reviewing the COVID-19 dataset from Johns Hopkins University, we see the substantial global impact of the pandemic since January 22, 2020. The number of cases and deaths has surged worldwide, with the United States having the highest counts.
+
+The analysis indicates that less developed countries and those with limited healthcare resources faced higher mortality rates. Conversely, nations with higher Human Development Indices managed to control the virus spread more effectively.
+
+Early and strict measures were essential for countries to maintain lower transmission rates throughout the pandemic. Additionally, the data hints at underreporting of cases and deaths in some nations, particularly those with less transparent governance, stressing the need for accurate and transparent data reporting.
+
+This analysis underscores the necessity for global collaboration and coordinated efforts to address future pandemics. It also highlights the importance of robust healthcare systems, swift governmental responses, and transparent data reporting in managing public health crises.
